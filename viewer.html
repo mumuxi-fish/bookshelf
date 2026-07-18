@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>阅读 - 书架</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* Viewer specific styles */
+    body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    .toolbar .back-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: background .2s;
+    }
+    .toolbar .back-btn:hover { background: var(--surface-hover); }
+    .toolbar .title {
+      flex: 1;
+      font-size: 0.9rem;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .toolbar .page-info {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .toolbar .nav-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 32px; height: 32px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .2s;
+    }
+    .toolbar .nav-btn:hover { background: var(--surface-hover); }
+    .toolbar .nav-btn:disabled { opacity: .3; cursor: default; }
+
+    /* Zoom controls */
+    .zoom-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .zoom-controls .zoom-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      min-width: 40px;
+      text-align: center;
+    }
+
+    /* PDF Viewport */
+    #viewer-container {
+      flex: 1;
+      overflow: auto;
+      background: #0a0a0c;
+      display: flex;
+      justify-content: center;
+    }
+    #pdf-canvas {
+      display: block;
+      margin: 16px auto;
+      box-shadow: 0 2px 20px rgba(0,0,0,.5);
+    }
+    .loading-viewer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      color: var(--text-muted);
+    }
+    .error-viewer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      color: var(--text-muted);
+      padding: 40px;
+      text-align: center;
+    }
+    .error-viewer .icon { font-size: 3rem; margin-bottom: 16px; }
+    .error-viewer p { margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="back-btn" onclick="goBack()">← 返回</button>
+    <span class="title" id="doc-title">加载中…</span>
+    <span class="page-info" id="page-info">- / -</span>
+    <button class="nav-btn" id="prev-btn" onclick="prevPage()" disabled>◀</button>
+    <button class="nav-btn" id="next-btn" onclick="nextPage()" disabled>▶</button>
+    <div class="zoom-controls">
+      <button class="nav-btn" onclick="zoomOut()">−</button>
+      <span class="zoom-label" id="zoom-label">100%</span>
+      <button class="nav-btn" onclick="zoomIn()">+</button>
+    </div>
+  </div>
+
+  <div id="viewer-container">
+    <div class="loading-viewer" id="loading-viewer">
+      <div class="spinner"></div>
+      <p>加载 PDF…</p>
+    </div>
+    <canvas id="pdf-canvas" style="display:none"></canvas>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    let pdfDoc = null;
+    let currentPage = 1;
+    let scale = 1.2;
+    const canvas = document.getElementById('pdf-canvas');
+    const ctx = canvas.getContext('2d');
+    const loadingViewer = document.getElementById('loading-viewer');
+    const docTitle = document.getElementById('doc-title');
+    const pageInfo = document.getElementById('page-info');
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+
+    // Get params
+    const params = new URLSearchParams(window.location.search);
+    const file = params.get('file');
+
+    if (!file) {
+      document.getElementById('viewer-container').innerHTML = `
+        <div class="error-viewer">
+          <div class="icon">⚠️</div>
+          <p>缺少文件参数</p>
+          <button class="back-btn" onclick="goBack()">返回书架</button>
+        </div>`;
+      throw new Error('No file specified');
+    }
+
+    docTitle.textContent = decodeURIComponent(file).replace(/\.\w+$/, '');
+
+    async function loadPDF() {
+      try {
+        const pdfPath = 'books/' + file;
+        pdfDoc = await pdfjsLib.getDocument(pdfPath).promise;
+        
+        loadingViewer.style.display = 'none';
+        canvas.style.display = 'block';
+        
+        pageInfo.textContent = `1 / ${pdfDoc.numPages}`;
+        if (pdfDoc.numPages > 1) nextBtn.disabled = false;
+        
+        renderPage(1);
+      } catch (err) {
+        document.getElementById('viewer-container').innerHTML = `
+          <div class="error-viewer">
+            <div class="icon">❌</div>
+            <p>无法加载 PDF</p>
+            <p style="font-size:0.85rem;color:var(--text-muted)">${err.message}</p>
+            <button class="back-btn" onclick="goBack()" style="margin-top:16px">返回书架</button>
+          </div>`;
+      }
+    }
+
+    async function renderPage(num) {
+      if (!pdfDoc) return;
+      const page = await pdfDoc.getPage(num);
+      const viewport = page.getViewport({ scale });
+      
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      
+      currentPage = num;
+      pageInfo.textContent = `${num} / ${pdfDoc.numPages}`;
+      prevBtn.disabled = num <= 1;
+      nextBtn.disabled = num >= pdfDoc.numPages;
+      
+      // Scroll to top of canvas
+      canvas.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function nextPage() {
+      if (currentPage < pdfDoc.numPages) renderPage(currentPage + 1);
+    }
+
+    function prevPage() {
+      if (currentPage > 1) renderPage(currentPage - 1);
+    }
+
+    function zoomIn() {
+      scale = Math.min(scale + 0.2, 3.0);
+      updateZoomLabel();
+      renderPage(currentPage);
+    }
+
+    function zoomOut() {
+      scale = Math.max(scale - 0.2, 0.4);
+      updateZoomLabel();
+      renderPage(currentPage);
+    }
+
+    function updateZoomLabel() {
+      document.getElementById('zoom-label').textContent = Math.round(scale * 100) + '%';
+    }
+
+    function goBack() {
+      window.close();
+      // Fallback if window.close doesn't work
+      window.location.href = '/';
+    }
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') nextPage();
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') prevPage();
+      if (e.key === 'Escape') goBack();
+    });
+
+    loadPDF();
+  </script>
+</body>
+</html>
