@@ -1,4 +1,5 @@
 const SHELF = document.getElementById('bookshelf');
+const BASE = window.location.pathname.replace(/\/[^/]*$/, '/');
 
 async function loadBooks() {
   try {
@@ -54,7 +55,7 @@ async function loadBooks() {
 
 function openReader(file) {
   const encoded = encodeURIComponent(file);
-  window.open(`/viewer.html?file=${encoded}`, '_blank');
+  window.open(`${BASE}viewer.html?file=${encoded}`, '_blank');
 }
 
 loadBooks();

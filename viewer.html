@@ -230,7 +230,8 @@
     function goBack() {
       window.close();
       // Fallback if window.close doesn't work
-      window.location.href = '/';
+      const base = window.location.pathname.replace(/\/[^/]*$/, '/');
+      window.location.href = base;
     }
 
     // Keyboard navigation
