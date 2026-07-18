@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>阅读 - 书架</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--bg); }
+    
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    .toolbar .back-btn {
+      background: none; border: 1px solid var(--border); color: var(--text);
+      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+      transition: background .2s;
+    }
+    .toolbar .back-btn:hover { background: var(--surface-hover); }
+    .toolbar .title {
+      flex: 1; font-size: 0.9rem; font-weight: 600;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .toolbar .chapter-info {
+      font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;
+    }
+    .toolbar .nav-btn {
+      background: var(--surface); border: 1px solid var(--border); color: var(--text);
+      width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-size: 1rem;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .2s;
+    }
+    .toolbar .nav-btn:hover { background: var(--surface-hover); }
+    .toolbar .nav-btn:disabled { opacity: .3; cursor: default; }
+    .toolbar .toc-btn {
+      background: none; border: 1px solid var(--border); color: var(--text);
+      padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+      transition: background .2s;
+    }
+    .toolbar .toc-btn:hover { background: var(--surface-hover); }
+    .toolbar .toc-btn.active { background: var(--accent); border-color: var(--accent); }
+
+    /* Reader Area */
+    #reader-area {
+      flex: 1; display: flex; overflow: hidden; position: relative;
+    }
+    #epub-viewport {
+      flex: 1; overflow: hidden; position: relative;
+      background: #f5f0e8;  /* warm paper color */
+    }
+    #epub-viewport iframe { width: 100%; height: 100%; border: none; }
+
+    /* TOC Sidebar */
+    #toc-sidebar {
+      width: 0; overflow: hidden;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      transition: width .25s ease;
+      flex-shrink: 0;
+    }
+    #toc-sidebar.open { width: 280px; overflow-y: auto; }
+    #toc-sidebar h3 {
+      padding: 16px 16px 8px; font-size: 0.85rem; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .05em;
+    }
+    #toc-sidebar ul { list-style: none; padding: 0; margin: 0; }
+    #toc-sidebar li a {
+      display: block; padding: 10px 16px; color: var(--text);
+      text-decoration: none; font-size: 0.85rem; line-height: 1.4;
+      border-left: 3px solid transparent; cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    #toc-sidebar li a:hover { background: var(--surface-hover); }
+    #toc-sidebar li a.active { border-left-color: var(--accent); background: var(--surface-hover); }
+    #toc-sidebar li a.sub { padding-left: 32px; font-size: 0.8rem; }
+
+    /* Loading */
+    .loading-viewer {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; flex: 1; color: var(--text-muted);
+    }
+    .error-viewer {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; flex: 1; color: var(--text-muted); padding: 40px; text-align: center;
+    }
+    .error-viewer .icon { font-size: 3rem; margin-bottom: 16px; }
+    .error-viewer p { margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="back-btn" onclick="goBack()">← 返回</button>
+    <span class="title" id="doc-title">加载中…</span>
+    <button class="toc-btn" id="toc-toggle" onclick="toggleTOC()">📖 目录</button>
+    <span class="chapter-info" id="chapter-info"></span>
+    <button class="nav-btn" id="prev-btn" onclick="prevPage()" disabled>◀</button>
+    <button class="nav-btn" id="next-btn" onclick="nextPage()" disabled>▶</button>
+  </div>
+
+  <div id="reader-area">
+    <div id="toc-sidebar"></div>
+    <div id="epub-viewport">
+      <div class="loading-viewer" id="loading-viewer">
+        <div class="spinner"></div>
+        <p>加载 EPUB…</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3/dist/epub.min.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const file = params.get('file');
+
+    if (!file) {
+      document.getElementById('epub-viewport').innerHTML = `
+        <div class="error-viewer">
+          <div class="icon">⚠️</div>
+          <p>缺少文件参数</p>
+          <button class="back-btn" onclick="goBack()">返回书架</button>
+        </div>`;
+      throw new Error('No file specified');
+    }
+
+    const base = window.location.pathname.replace(/\/[^/]*$/, '/');
+    const docTitle = document.getElementById('doc-title');
+    const chInfo = document.getElementById('chapter-info');
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const tocSidebar = document.getElementById('toc-sidebar');
+    const tocToggle = document.getElementById('toc-toggle');
+    const viewport = document.getElementById('epub-viewport');
+
+    docTitle.textContent = decodeURIComponent(file).replace(/\.\w+$/, '');
+
+    let book, rendition, tocOpen = false;
+
+    async function loadEPUB() {
+      try {
+        book = ePub(base + 'books/' + file);
+        rendition = book.renderTo('epub-viewport', {
+          width: '100%',
+          height: '100%',
+          spread: 'none',
+          flow: 'paginated'
+        });
+
+        const displayed = await rendition.display();
+
+        // Setup navigation
+        rendition.on('relocated', (loc) => {
+          const progress = book.locations ? book.locations.percentageFromCfi(loc.start.cfi) : 0;
+          const pct = Math.round(progress * 100);
+          chInfo.textContent = pct + '%';
+          prevBtn.disabled = !loc.atStart;
+          nextBtn.disabled = !loc.atEnd;
+
+          // Update TOC active item
+          if (tocSidebar.classList.contains('open')) {
+            tocSidebar.querySelectorAll('a').forEach(a => a.classList.remove('active'));
+            const href = loc.start.href;
+            if (href) {
+              const active = tocSidebar.querySelector(`a[href="${href}"]`);
+              if (active) active.classList.add('active');
+            }
+          }
+        });
+
+        // Load TOC
+        const nav = await book.loaded.navigation;
+        renderTOC(nav.toc);
+
+        document.getElementById('loading-viewer').style.display = 'none';
+        prevBtn.disabled = true;
+        nextBtn.disabled = false;
+
+        // Keyboard
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') nextPage();
+          if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') prevPage();
+          if (e.key === 'Escape') { if (tocOpen) toggleTOC(); else goBack(); }
+        });
+
+      } catch (err) {
+        document.getElementById('epub-viewport').innerHTML = `
+          <div class="error-viewer">
+            <div class="icon">❌</div>
+            <p>无法加载 EPUB</p>
+            <p style="font-size:0.85rem;color:var(--text-muted)">${err.message}</p>
+            <button class="back-btn" onclick="goBack()" style="margin-top:16px">返回书架</button>
+          </div>`;
+      }
+    }
+
+    function renderTOC(items, parentLevel = 0) {
+      if (items.length === 0) {
+        tocSidebar.innerHTML = '<h3>目录</h3><ul><li><a style="color:var(--text-muted);cursor:default">无目录</a></li></ul>';
+        return;
+      }
+      let html = '<h3>目录</h3><ul>';
+      items.forEach(item => {
+        const cls = parentLevel > 0 ? 'sub' : '';
+        html += `<li><a class="${cls}" href="${item.href}">${item.label}</a></li>`;
+        if (item.subitems && item.subitems.length > 0) {
+          html += `<li>${item.subitems.map(s => `<a class="sub" href="${s.href}">${s.label}</a>`).join('</li><li>')}</li>`;
+        }
+      });
+      html += '</ul>';
+      tocSidebar.innerHTML = html;
+
+      // TOC click handling
+      tocSidebar.querySelectorAll('a[href]').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          rendition.display(a.getAttribute('href'));
+          if (window.innerWidth < 768) toggleTOC(); // auto-close on mobile
+        });
+      });
+    }
+
+    function nextPage() { rendition.next(); }
+    function prevPage() { rendition.prev(); }
+
+    function toggleTOC() {
+      tocOpen = !tocOpen;
+      tocSidebar.classList.toggle('open', tocOpen);
+      tocToggle.classList.toggle('active', tocOpen);
+    }
+
+    function goBack() {
+      window.close();
+      window.location.href = base;
+    }
+
+    loadEPUB();
+  </script>
+</body>
+</html>

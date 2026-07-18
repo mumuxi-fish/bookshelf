@@ -24,13 +24,15 @@ async function loadBooks() {
 
     SHELF.innerHTML = books.map((book, i) => {
       const ext = (book.file || '').split('.').pop().toLowerCase();
-      const icon = ext === 'pdf' ? '📄' : '📖';
-      const title = book.title || book.file.replace(/\.\w+$/, '');
+      const isEpub = ext === 'epub';
+      const icon = isEpub ? '📖' : '📄';
+      const viewer = isEpub ? 'epub-viewer.html' : 'viewer.html';
+      const title = book.title || book.file.replace(/\.[^.]+$/, '');
       const author = book.author || '';
       const size = book.size || '';
       const added = book.added || '';
 
-      return `<div class="book-card" onclick="openReader('${book.file}')">
+      return `<div class="book-card" onclick="openReader('${book.file}', '${viewer}')">
         <div class="book-cover">
           <span class="icon">${icon}</span>
         </div>
@@ -39,7 +41,7 @@ async function loadBooks() {
           ${author ? `<div class="book-author">${author}</div>` : ''}
           <div class="book-meta">
             <span>${size}${added ? ' · ' + added : ''}</span>
-            <button class="read-btn" onclick="event.stopPropagation(); openReader('${book.file}')">阅读</button>
+            <button class="read-btn" onclick="event.stopPropagation(); openReader('${book.file}', '${viewer}')">阅读</button>
           </div>
         </div>
       </div>`;
@@ -53,9 +55,9 @@ async function loadBooks() {
   }
 }
 
-function openReader(file) {
+function openReader(file, viewer) {
   const encoded = encodeURIComponent(file);
-  window.open(`${BASE}viewer.html?file=${encoded}`, '_blank');
+  window.open(`${BASE}${viewer}?file=${encoded}`, '_blank');
 }
 
 loadBooks();
